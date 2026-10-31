@@ -1,0 +1,63 @@
+name: Gerar app Android
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ADMOB_APP_ID: ${{ vars.ADMOB_APP_ID || 'ca-app-pub-3940256099942544~3347511713' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Montar projeto
+        run: |
+          mkdir build && cd build
+          npm init -y > /dev/null
+          npm i @capacitor/core@8 @capacitor/cli@8 @capacitor/android@8 @capacitor-community/admob@8
+          mkdir www && cp ../index.html www/index.html
+          npx cap init "Noite Sem Fim" com.ibitdaenterprise.noitesemfim --web-dir www
+          npx cap add android
+          npx cap sync android
+          python3 - <<'PY'
+          import os,re
+          m='android/app/src/main/AndroidManifest.xml'
+          s=open(m).read()
+          s=s.replace('</application>','<meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="'+os.environ['ADMOB_APP_ID']+'"/>\n</application>',1)
+          s=s.replace('<activity','<activity android:screenOrientation="portrait"',1)
+          open(m,'w').write(s)
+          g='android/app/build.gradle'
+          s=open(g).read()
+          s=re.sub(r'versionCode \d+','versionCode '+os.environ['GITHUB_RUN_NUMBER'],s)
+          s=re.sub(r'versionName "[^"]*"','versionName "1.0.'+os.environ['GITHUB_RUN_NUMBER']+'"',s)
+          open(g,'w').write(s)
+          PY
+      - name: Compilar
+        run: |
+          cd build/android
+          chmod +x gradlew
+          ./gradlew assembleDebug bundleRelease --no-daemon
+      - name: Assinar AAB (se a chave estiver configurada)
+        env:
+          KS: ${{ secrets.KEYSTORE_B64 }}
+          KSP: ${{ secrets.KEYSTORE_PASS }}
+        run: |
+          cd build/android/app/build/outputs
+          mkdir -p ../../../../../saida
+          cp apk/debug/app-debug.apk ../../../../../saida/NoiteSemFim-teste.apk
+          if [ -n "$KS" ]; then
+            echo "$KS" | base64 -d > ks.jks
+            jarsigner -keystore ks.jks -storepass "$KSP" -keypass "$KSP" bundle/release/app-release.aab upload
+            cp bundle/release/app-release.aab ../../../../../saida/NoiteSemFim-playstore.aab
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NoiteSemFim-app
+          path: saida/
